@@ -186,33 +186,49 @@ async function checkAmazonAdvancedDeals() {
 async function checkCdiscountDeals() {
     try {
         sendLogMessage('🔎 Recherche de deals Cdiscount...');
+
+        // Envoi de la requête avec des headers supplémentaires pour éviter les erreurs 403
         const { data } = await axios.get('https://www.cdiscount.com/', {
             headers: {
-                'User-Agent': rotateUserAgent()
+                'User-Agent': rotateUserAgent(),
+                'Referer': 'https://www.google.com',
+                'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Accept-Encoding': 'gzip, deflate, br'
             }
         });
         
+        // Chargement du HTML dans cheerio
         const $ = cheerio.load(data);
         const deals = [];
+
+        // Sélection des conteneurs de produit et extraction des informations
         $('.productContainer').each((i, el) => {
             const title = $(el).find('.productTitle').text().trim();
             const currentPrice = $(el).find('.productPrice').text().trim();
             const oldPrice = $(el).find('.productOldPrice').text().trim();
             const discount = $(el).find('.productDiscount').text().trim();
-            const url = $(el).find('a').attr('href');
+            let url = $(el).find('a').attr('href');
 
+            // Si l'URL est relative, la rendre absolue
+            if (url.startsWith('/')) {
+                url = `https://www.cdiscount.com${url}`;
+            }
+
+            // Calcul de la réduction avec la gestion des prix
             const discountPercentage = calculateDiscount(currentPrice, oldPrice);
             if (discountPercentage >= 50) {
                 deals.push({ title, currentPrice, oldPrice, discount, url });
             }
         });
-        
+
+        // Vérification des résultats
         if (deals.length > 0) {
             sendLogMessage(`📦 ${deals.length} deals trouvés sur Cdiscount.`);
         } else {
             sendLogMessage('❌ Aucun deal trouvé sur Cdiscount.');
         }
-        
+
+        // Envoi des résultats dans le salon Discord
         deals.forEach(deal => {
             const embed = new EmbedBuilder()
                 .setTitle(deal.title)
@@ -227,10 +243,11 @@ async function checkCdiscountDeals() {
             client.channels.cache.get(channels.cdiscount).send({ embeds: [embed] });
         });
     } catch (error) {
-        sendLogMessage('⚠️ Erreur lors de la recherche des deals cdiscount.');
-        console.error('Erreur lors de la recherche des deals cdiscount:', error);
+        sendLogMessage('⚠️ Erreur lors de la recherche des deals Cdiscount.');
+        console.error('Erreur lors de la recherche des deals Cdiscount:', error);
     }
 }
+
 // ===================== RECHERCHE AUCHAN =====================
 
 async function checkAuchanDeals() {
