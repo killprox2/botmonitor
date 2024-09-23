@@ -65,7 +65,9 @@ async function checkAmazonGeneralDeals() {
         await sendLogMessage('🔎 Recherche de deals Amazon général...');
 
         const browser = await puppeteer.launch({
+            headless: true,
             args: ['--no-sandbox', '--disable-setuid-sandbox'],
+            executablePath: '/app/.cache/puppeteer/chrome/linux-129.0.6668.58/chrome-linux'
         });
         const page = await browser.newPage();
 
@@ -123,7 +125,9 @@ async function checkAmazonAdvancedDeals() {
         await sendLogMessage('🔎 Recherche de deals avancés Amazon...');
 
         const browser = await puppeteer.launch({
+            headless: true,
             args: ['--no-sandbox', '--disable-setuid-sandbox'],
+            executablePath: '/app/.cache/puppeteer/chrome/linux-129.0.6668.58/chrome-linux'
         });
         const page = await browser.newPage();
 
@@ -163,7 +167,7 @@ async function checkAmazonAdvancedDeals() {
                 )
                 .setFooter({ text: 'Amazon Advanced Deal' });
 
-            const channelId = channels.electromenager; // Assurez-vous que la catégorie soit correcte
+            const channelId = channels.electromenager;
             client.channels.cache.get(channelId).send({ embeds: [embed] });
             await sendLogMessage(`📌 Produit ajouté dans électroménager : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount}%)`);
         }
@@ -178,68 +182,10 @@ async function checkAmazonAdvancedDeals() {
 // ===================== RECHERCHE CDISCOUNT =====================
 
 async function checkCdiscountDeals() {
-    try {
-        await sendLogMessage('🔎 Recherche de deals Cdiscount...');
-
-        const { data } = await axios.get('https://www.cdiscount.com/', {
-            headers: {
-                'User-Agent': rotateUserAgent(),
-                'Referer': 'https://www.google.com',
-                'Accept-Language': 'fr-FR,fr;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br'
-            }
-        });
-
-        const $ = cheerio.load(data);
-        const deals = [];
-
-        $('.productContainer').each((i, el) => {
-            const title = $(el).find('.productTitle').text().trim();
-            const currentPrice = $(el).find('.productPrice').text().trim();
-            const oldPrice = $(el).find('.productOldPrice').text().trim();
-            const discount = $(el).find('.productDiscount').text().trim();
-            let url = $(el).find('a').attr('href');
-
-            if (url.startsWith('/')) {
-                url = `https://www.cdiscount.com${url}`;
-            }
-
-            const discountPercentage = calculateDiscount(currentPrice, oldPrice);
-            if (discountPercentage >= 50) {
-                deals.push({ title, currentPrice, oldPrice, discount, url });
-            }
-        });
-
-        if (deals.length > 0) {
-            await sendLogMessage(`📦 ${deals.length} deals trouvés sur Cdiscount.`);
-        } else {
-            await sendLogMessage('❌ Aucun deal trouvé sur Cdiscount.');
-        }
-
-        deals.forEach(deal => {
-            const embed = new EmbedBuilder()
-                .setTitle(deal.title)
-                .setURL(deal.url)
-                .addFields(
-                    { name: 'Prix actuel', value: deal.currentPrice, inline: true },
-                    { name: 'Prix avant', value: deal.oldPrice, inline: true },
-                    { name: 'Réduction', value: deal.discount, inline: true }
-                )
-                .setFooter({ text: 'Cdiscount Deal' });
-              client.channels.cache.get(channels.cdiscount).send({ embeds: [embed] });
-            });
-          } catch (error) {
-              await sendLogMessage('⚠️ Erreur lors de la recherche des deals Cdiscount.');
-              console.error('Erreur lors de la recherche des deals Cdiscount:', error);
-          }
-  }
-  // ===================== RECHERCHE AUCHAN =====================
-
-async function checkAuchanDeals() {
   try {
-      await sendLogMessage('🔎 Recherche de deals Auchan...');
-      
-      const { data } = await axios.get('https://www.auchan.fr/', {
+      await sendLogMessage('🔎 Recherche de deals Cdiscount...');
+
+      const { data } = await axios.get('https://www.cdiscount.com/', {
           headers: {
               'User-Agent': rotateUserAgent(),
               'Referer': 'https://www.google.com',
@@ -259,11 +205,71 @@ async function checkAuchanDeals() {
           let url = $(el).find('a').attr('href');
 
           if (url.startsWith('/')) {
+              url = `https://www.cdiscount.com${url}`;
+          }
+
+          if (parseFloat(discount.replace('%', '').replace('-', '').trim()) >= 50) {
+              deals.push({ title, currentPrice, oldPrice, discount, url });
+          }
+      });
+
+      if (deals.length > 0) {
+          await sendLogMessage(`📦 ${deals.length} deals trouvés sur Cdiscount.`);
+      } else {
+          await sendLogMessage('❌ Aucun deal trouvé sur Cdiscount.');
+      }
+
+      for (let deal of deals) {
+          const embed = new EmbedBuilder()
+              .setTitle(deal.title)
+              .setURL(deal.url)
+              .addFields(
+                  { name: 'Prix actuel', value: deal.currentPrice, inline: true },
+                  { name: 'Prix avant', value: deal.oldPrice, inline: true },
+                  { name: 'Réduction', value: deal.discount, inline: true }
+              )
+              .setFooter({ text: 'Cdiscount Deal' });
+
+          client.channels.cache.get(channels.cdiscount).send({ embeds: [embed] });
+          await sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount})`);
+      }
+  } catch (error) {
+      await sendLogMessage('⚠️ Erreur lors de la recherche des deals Cdiscount.');
+      console.error('Erreur lors de la recherche des deals Cdiscount:', error);
+  }
+}
+
+// ===================== RECHERCHE AUCHAN =====================
+
+async function checkAuchanDeals() {
+  try {
+      await sendLogMessage('🔎 Recherche de deals Auchan...');
+
+      const { data } = await axios.get('https://www.auchan.fr/', {
+          headers: {
+              'User-Agent': rotateUserAgent(),
+              'Referer': 'https://www.google.com',
+              'Accept-Language': 'fr-FR,fr;q=0.9',
+              'Accept-Encoding': 'gzip, deflate, br'
+          }
+      });
+
+      const $ = cheerio.load(data);
+      const deals = [];
+
+      // Extract deals similar to previous functions
+      $('.productContainer').each((i, el) => {
+          const title = $(el).find('.productTitle').text().trim();
+          const currentPrice = $(el).find('.productPrice').text().trim();
+          const oldPrice = $(el).find('.productOldPrice').text().trim();
+          const discount = $(el).find('.productDiscount').text().trim();
+          let url = $(el).find('a').attr('href');
+
+          if (url.startsWith('/')) {
               url = `https://www.auchan.fr${url}`;
           }
 
-          const discountPercentage = calculateDiscount(currentPrice, oldPrice);
-          if (discountPercentage >= 50) {
+          if (parseFloat(discount.replace('%', '').replace('-', '').trim()) >= 50) {
               deals.push({ title, currentPrice, oldPrice, discount, url });
           }
       });
@@ -274,7 +280,7 @@ async function checkAuchanDeals() {
           await sendLogMessage('❌ Aucun deal trouvé sur Auchan.');
       }
 
-      deals.forEach(deal => {
+      for (let deal of deals) {
           const embed = new EmbedBuilder()
               .setTitle(deal.title)
               .setURL(deal.url)
@@ -286,7 +292,8 @@ async function checkAuchanDeals() {
               .setFooter({ text: 'Auchan Deal' });
 
           client.channels.cache.get(channels.auchan).send({ embeds: [embed] });
-      });
+          await sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount})`);
+      }
   } catch (error) {
       await sendLogMessage('⚠️ Erreur lors de la recherche des deals Auchan.');
       console.error('Erreur lors de la recherche des deals Auchan:', error);
@@ -295,76 +302,61 @@ async function checkAuchanDeals() {
 
 // ===================== RECHERCHE MANOMANO =====================
 
-
 async function checkManomanoDeals() {
-    try {
-        await sendLogMessage('🔎 Recherche de deals Manomano...');
+  try {
+      await sendLogMessage('🔎 Recherche de deals Manomano...');
 
-        const browser = await puppeteer.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        });
-        const page = await browser.newPage();
+      const { data } = await axios.get('https://www.manomano.fr/', {
+          headers: {
+              'User-Agent': rotateUserAgent(),
+              'Referer': 'https://www.google.com',
+              'Accept-Language': 'fr-FR,fr;q=0.9',
+              'Accept-Encoding': 'gzip, deflate, br'
+          }
+      });
 
-        await page.goto('https://www.manomano.fr', { waitUntil: 'networkidle2' });
+      const $ = cheerio.load(data);
+      const deals = [];
 
-        const deals = await page.evaluate(() => {
-            const dealElements = document.querySelectorAll('.productContainer');
-            const extractedDeals = [];
-            dealElements.forEach(el => {
-                const title = el.querySelector('.productTitle').innerText.trim();
-                const currentPrice = el.querySelector('.productPrice').innerText.trim();
-                const oldPrice = el.querySelector('.productOldPrice').innerText.trim();
-                const discount = el.querySelector('.productDiscount').innerText.trim();
-                const url = el.querySelector('a').href;
-                extractedDeals.push({ title, currentPrice, oldPrice, discount, url });
-            });
-            return extractedDeals;
-        });
+      // Extract deals similar to previous functions
+      $('.productContainer').each((i, el) => {
+          const title = $(el).find('.productTitle').text().trim();
+          const currentPrice = $(el).find('.productPrice').text().trim();
+          const oldPrice = $(el).find('.productOldPrice').text().trim();
+          const discount = $(el).find('.productDiscount').text().trim();
+          let url = $(el).find('a').attr('href');
 
-        await browser.close();
+          if (url.startsWith('/')) {
+              url = `https://www.manomano.fr${url}`;
+          }
 
-        if (deals.length > 0) {
-            await sendLogMessage(`📦 ${deals.length} deals trouvés sur Manomano.`);
-        } else {
-            await sendLogMessage('❌ Aucun deal trouvé sur Manomano.');
-        }
+          if (parseFloat(discount.replace('%', '').replace('-', '').trim()) >= 50) {
+              deals.push({ title, currentPrice, oldPrice, discount, url });
+          }
+      });
 
-        for (let deal of deals) {
-            const embed = new EmbedBuilder()
-                .setTitle(deal.title)
-                .setURL(deal.url)
-                .addFields(
-                    { name: 'Prix actuel', value: deal.currentPrice, inline: true },
-                    { name: 'Prix avant', value: deal.oldPrice, inline: true },
-                    { name: 'Réduction', value: deal.discount, inline: true }
-                )
-                .setFooter({ text: 'Manomano Deal' });
+      if (deals.length > 0) {
+          await sendLogMessage(`📦 ${deals.length} deals trouvés sur Manomano.`);
+      } else {
+          await sendLogMessage('❌ Aucun deal trouvé sur Manomano.');
+      }
 
-            client.channels.cache.get(channels.manomano).send({ embeds: [embed] });
-        }
-    } catch (error) {
-        await sendLogMessage('⚠️ Erreur lors de la recherche des deals Manomano.');
-        console.error('Erreur lors de la recherche des deals Manomano:', error);
-    }
+      for (let deal of deals) {
+          const embed = new EmbedBuilder()
+              .setTitle(deal.title)
+              .setURL(deal.url)
+              .addFields(
+                  { name: 'Prix actuel', value: deal.currentPrice, inline: true },
+                  { name: 'Prix avant', value: deal.oldPrice, inline: true },
+                  { name: 'Réduction', value: deal.discount, inline: true }
+              )
+              .setFooter({ text: 'Manomano Deal' });
+
+          client.channels.cache.get(channels.manomano).send({ embeds: [embed] });
+          await sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount})`);
+      }
+  } catch (error) {
+      await sendLogMessage('⚠️ Erreur lors de la recherche des deals Manomano.');
+      console.error('Erreur lors de la recherche des deals Manomano:', error);
+  }
 }
-
-
-// ===================== UTILITAIRES =====================
-
-function calculateDiscount(currentPrice, oldPrice) {
-  const current = parseFloat(currentPrice.replace('€', '').replace(',', '.'));
-  const old = parseFloat(oldPrice.replace('€', '').replace(',', '.'));
-  return ((old - current) / old * 100).toFixed(2);
-}
-
-function rotateUserAgent() {
-  const userAgents = [
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Safari/605.1.15',
-      'Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36',
-      // Ajoutez d'autres agents utilisateurs si nécessaire
-  ];
-  return userAgents[Math.floor(Math.random() * userAgents.length)];
-}
-
