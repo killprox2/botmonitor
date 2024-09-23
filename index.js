@@ -46,6 +46,14 @@ function sendLogMessage(content) {
 client.once('ready', () => {
     console.log('Bot is online!');
     sendLogMessage('✅ Bot démarré et prêt à l\'emploi.');
+    
+    // Lancer immédiatement les recherches pour tester
+    console.log('🔄 Lancement immédiat des recherches pour test...');
+    checkAmazonGeneralDeals();
+    checkAmazonAdvancedDeals();
+    checkCdiscountDeals();
+    checkAuchanDeals();
+    checkManomanoDeals();
 });
 
 // ===================== RECHERCHE AMAZON =====================
