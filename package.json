@@ -2,10 +2,11 @@
   "name": "amazon-discord-monitor",
   "version": "1.0.0",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js",
-    "heroku-postbuild": "npm install puppeteer --unsafe-perm=true"
-  },
+"scripts": {
+  "start": "node index.js",
+  "heroku-postbuild": "npm install puppeteer --unsafe-perm=true && npx puppeteer browsers install chrome"
+}
+
   "dependencies": {
     "axios": "^1.7.7",
     "cheerio": "^1.0.0",
