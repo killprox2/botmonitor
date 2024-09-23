@@ -212,8 +212,10 @@ async function checkCdiscountDeals() {
             client.channels.cache.get(channels.cdiscount).send({ embeds: [embed] });
             sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount}%)`);
         });
-        sendLogMessage('⚠️ Erreur lors de la recherche des deals Manomano.');
-        console.error('Erreur lors de la recherche des deals Manomano:', error);
+        await driver.quit();
+      } catch (error) {
+        sendLogMessage('⚠️ Erreur lors de la recherche des deals avancés Amazon.');
+        console.error('Erreur lors de la recherche des deals avancés Amazon:', error);
     }
 }
 // ===================== RECHERCHE AUCHAN =====================
