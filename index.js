@@ -7,7 +7,7 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers],
 });
 
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.TOKEN);
 
 // Rôles et salons
 const roles = {
