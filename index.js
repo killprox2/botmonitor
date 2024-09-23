@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const { Builder, By } = require('selenium-webdriver'); // Pour utiliser Selenium
 require('dotenv').config(); // Utilisation des variables d'environnement pour le token
 
 const client = new Client({
@@ -46,7 +47,7 @@ function sendLogMessage(content) {
 client.once('ready', () => {
     console.log('Bot is online!');
     sendLogMessage('✅ Bot démarré et prêt à l\'emploi.');
-    
+
     // Lancer immédiatement les recherches pour tester
     console.log('🔄 Lancement immédiat des recherches pour test...');
     checkAmazonGeneralDeals();
@@ -58,33 +59,35 @@ client.once('ready', () => {
 
 // ===================== RECHERCHE AMAZON =====================
 
-// Recherche générale sur Amazon (promotions supérieures à 70%, ventes flash, autres vendeurs)
 async function checkAmazonGeneralDeals() {
     try {
         sendLogMessage('🔎 Recherche de deals Amazon général...');
-        const { data } = await axios.get('https://www.amazon.fr/deals');
-        const $ = cheerio.load(data); // Charger la page HTML avec Cheerio
-
-        const deals = [];
-        $('.dealContainer').each((i, el) => {
-            const title = $(el).find('.dealTitle').text().trim();
-            const currentPrice = $(el).find('.dealPrice').text().trim();
-            const oldPrice = $(el).find('.dealOldPrice').text().trim();
-            const discount = $(el).find('.dealDiscount').text().trim();
-            const url = 'https://www.amazon.fr' + $(el).find('a').attr('href');
-
+        
+        const driver = await new Builder().forBrowser('chrome').build(); // Utiliser un navigateur Chrome avec Selenium
+        await driver.get('https://www.amazon.fr/deals');
+        
+        let deals = [];
+        const dealElements = await driver.findElements(By.css('.dealContainer'));
+        
+        for (let el of dealElements) {
+            const title = await el.findElement(By.css('.dealTitle')).getText();
+            const currentPrice = await el.findElement(By.css('.dealPrice')).getText();
+            const oldPrice = await el.findElement(By.css('.dealOldPrice')).getText();
+            const discount = await el.findElement(By.css('.dealDiscount')).getText();
+            const url = await el.findElement(By.css('a')).getAttribute('href');
+            
             const discountPercentage = calculateDiscount(currentPrice, oldPrice);
             if (discountPercentage >= 70 || multipleCouponsAvailable(el) || isFlashSale(el)) {
                 deals.push({ title, currentPrice, oldPrice, discount, url });
             }
-        });
-
+        }
+        
         if (deals.length > 0) {
             sendLogMessage(`📦 ${deals.length} deals trouvés sur Amazon général.`);
         } else {
             sendLogMessage('❌ Aucun deal trouvé sur Amazon général.');
         }
-
+        
         deals.forEach(deal => {
             const embed = new EmbedBuilder()
                 .setTitle(deal.title)
@@ -95,43 +98,49 @@ async function checkAmazonGeneralDeals() {
                     { name: 'Réduction', value: deal.discount, inline: true }
                 )
                 .setFooter({ text: 'Amazon Deal' });
-
+            
             client.channels.cache.get(channels.amazon).send({ embeds: [embed] });
             sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount}%)`);
         });
+        
+        await driver.quit(); // Fermer le navigateur une fois les données récupérées
     } catch (error) {
         sendLogMessage('⚠️ Erreur lors de la recherche des deals Amazon général.');
         console.error('Erreur lors de la recherche des deals Amazon général:', error);
     }
 }
 
-// Recherche avancée pour les salons spécifiques (promotions avec 60% de réduction minimum)
+// ===================== RECHERCHE AVANCÉE AMAZON =====================
+
 async function checkAmazonAdvancedDeals() {
     try {
         sendLogMessage('🔎 Recherche de deals avancés Amazon...');
-        const { data } = await axios.get('https://www.amazon.fr/deals');
-        const $ = cheerio.load(data); // Charger la page HTML avec Cheerio
-
-        const deals = [];
-        $('.dealContainer').each((i, el) => {
-            const title = $(el).find('.dealTitle').text().trim();
-            const currentPrice = $(el).find('.dealPrice').text().trim();
-            const oldPrice = $(el).find('.dealOldPrice').text().trim();
-            const url = 'https://www.amazon.fr' + $(el).find('a').attr('href');
-
+        
+        const driver = await new Builder().forBrowser('chrome').build(); // Utiliser Selenium pour les deals avancés
+        await driver.get('https://www.amazon.fr/deals');
+        
+        let deals = [];
+        const dealElements = await driver.findElements(By.css('.dealContainer'));
+        
+        for (let el of dealElements) {
+            const title = await el.findElement(By.css('.dealTitle')).getText();
+            const currentPrice = await el.findElement(By.css('.dealPrice')).getText();
+            const oldPrice = await el.findElement(By.css('.dealOldPrice')).getText();
+            const url = await el.findElement(By.css('a')).getAttribute('href');
+            
             const discountPercentage = calculateDiscount(currentPrice, oldPrice);
             if (discountPercentage >= 60) {
                 const category = determineCategory(title); // Déterminer la catégorie du produit
                 deals.push({ title, currentPrice, oldPrice, discount: `${discountPercentage}%`, url, category });
             }
-        });
-
+        }
+        
         if (deals.length > 0) {
             sendLogMessage(`📦 ${deals.length} deals avancés trouvés sur Amazon.`);
         } else {
             sendLogMessage('❌ Aucun deal avancé trouvé sur Amazon.');
         }
-
+        
         deals.forEach(deal => {
             const embed = new EmbedBuilder()
                 .setTitle(deal.title)
@@ -149,6 +158,8 @@ async function checkAmazonAdvancedDeals() {
                 sendLogMessage(`📌 Produit ajouté dans ${deal.category} : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount}%)`);
             }
         });
+        
+        await driver.quit();
     } catch (error) {
         sendLogMessage('⚠️ Erreur lors de la recherche des deals avancés Amazon.');
         console.error('Erreur lors de la recherche des deals avancés Amazon:', error);
@@ -160,9 +171,13 @@ async function checkAmazonAdvancedDeals() {
 async function checkCdiscountDeals() {
     try {
         sendLogMessage('🔎 Recherche de deals Cdiscount...');
-        const { data } = await axios.get('https://www.cdiscount.com/');
-        const $ = cheerio.load(data); // Charger la page HTML avec Cheerio
-
+        const { data } = await axios.get('https://www.cdiscount.com/', {
+            headers: {
+                'User-Agent': rotateUserAgent()
+            }
+        });
+        
+        const $ = cheerio.load(data);
         const deals = [];
         $('.productContainer').each((i, el) => {
             const title = $(el).find('.productTitle').text().trim();
@@ -176,13 +191,13 @@ async function checkCdiscountDeals() {
                 deals.push({ title, currentPrice, oldPrice, discount, url });
             }
         });
-
+        
         if (deals.length > 0) {
             sendLogMessage(`📦 ${deals.length} deals trouvés sur Cdiscount.`);
         } else {
             sendLogMessage('❌ Aucun deal trouvé sur Cdiscount.');
         }
-
+        
         deals.forEach(deal => {
             const embed = new EmbedBuilder()
                 .setTitle(deal.title)
@@ -197,20 +212,22 @@ async function checkCdiscountDeals() {
             client.channels.cache.get(channels.cdiscount).send({ embeds: [embed] });
             sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount}%)`);
         });
-    } catch (error) {
-        sendLogMessage('⚠️ Erreur lors de la recherche des deals Cdiscount.');
-        console.error('Erreur lors de la recherche des deals Cdiscount:', error);
+        sendLogMessage('⚠️ Erreur lors de la recherche des deals Manomano.');
+        console.error('Erreur lors de la recherche des deals Manomano:', error);
     }
 }
-
 // ===================== RECHERCHE AUCHAN =====================
 
 async function checkAuchanDeals() {
     try {
         sendLogMessage('🔎 Recherche de deals Auchan...');
-        const { data } = await axios.get('https://www.auchan.fr/');
-        const $ = cheerio.load(data); // Charger la page HTML avec Cheerio
+        const { data } = await axios.get('https://www.auchan.fr/', {
+            headers: {
+                'User-Agent': rotateUserAgent()
+            }
+        });
 
+        const $ = cheerio.load(data);
         const deals = [];
         $('.dealProduct').each((i, el) => {
             const title = $(el).find('.productName').text().trim();
@@ -256,9 +273,13 @@ async function checkAuchanDeals() {
 async function checkManomanoDeals() {
     try {
         sendLogMessage('🔎 Recherche de deals Manomano...');
-        const { data } = await axios.get('https://www.manomano.fr/');
-        const $ = cheerio.load(data); // Charger la page HTML avec Cheerio
+        const { data } = await axios.get('https://www.manomano.fr/', {
+            headers: {
+                'User-Agent': rotateUserAgent()
+            }
+        });
 
+        const $ = cheerio.load(data);
         const deals = [];
         $('.productCard').each((i, el) => {
             const title = $(el).find('.productTitle').text().trim();
@@ -325,14 +346,12 @@ function determineCategory(title) {
 
 // Fonction pour vérifier si plusieurs coupons sont disponibles (pour Amazon)
 function multipleCouponsAvailable(element) {
-    // Logique à ajouter selon la structure HTML
-    return $(element).find('.coupon').length > 1;
+    return element.find('.coupon').length > 1;
 }
 
 // Fonction pour vérifier s'il s'agit d'une vente flash (pour Amazon)
 function isFlashSale(element) {
-    // Logique à ajouter selon la structure HTML
-    return $(element).find('.flashSale').length > 0;
+    return element.find('.flashSale').length > 0;
 }
 
 // ===================== PLANIFICATION DES RECHERCHES =====================
@@ -362,3 +381,14 @@ setInterval(() => {
     sendLogMessage('🔄 Lancement de la recherche de deals Manomano...');
     checkManomanoDeals();
 }, 3600000); // Toutes les heures
+
+// ===================== ROTATION DES USER AGENTS =====================
+
+function rotateUserAgent() {
+    const userAgents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Safari/605.1.15',
+        'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:88.0) Gecko/20100101 Firefox/88.0'
+    ];
+    return userAgents[Math.floor(Math.random() * userAgents.length)];
+}
