@@ -79,11 +79,16 @@ async function checkAmazonGeneralDeals() {
             const title = await el.findElement(By.css('.dealTitle')).getText();
             const currentPrice = await el.findElement(By.css('.dealPrice')).getText();
             const oldPrice = await el.findElement(By.css('.dealOldPrice')).getText();
-            const discount = await el.findElement(By.css('.dealDiscount')).getText();
+            
+            // Extraction du pourcentage de réduction depuis la structure de la page Amazon
+            let discountElement = await el.findElement(By.css('div[data-component="dui-badge"] .style_badgeLabel__dD0Hv'));
+            const discount = await discountElement.getText(); // Exemple : "-16%"
+            
             const url = await el.findElement(By.css('a')).getAttribute('href');
             
-            const discountPercentage = calculateDiscount(currentPrice, oldPrice);
-            if (discountPercentage >= 70 || multipleCouponsAvailable(el) || isFlashSale(el)) {
+            // Vérification si la réduction dépasse un certain seuil
+            const discountValue = parseFloat(discount.replace('%', '').replace('-', '').trim());
+            if (discountValue >= 70) {
                 deals.push({ title, currentPrice, oldPrice, discount, url });
             }
         }
@@ -106,7 +111,7 @@ async function checkAmazonGeneralDeals() {
                 .setFooter({ text: 'Amazon Deal' });
             
             client.channels.cache.get(channels.amazon).send({ embeds: [embed] });
-            sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount}%)`);
+            sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount})`);
         });
         
         await driver.quit();
