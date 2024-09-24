@@ -140,9 +140,11 @@ async function checkAmazonGeneralDeals() {
 // ===================== Recherche Amazon Avancé =====================
 
 async function checkAmazonAdvancedDeals() {
+    const searchKeywords = ['entretien', 'electromenager', 'jouet', 'livre', 'enfant'];
+    const baseURL = 'https://www.amazon.fr/s?k=';
+    
     try {
         await sendLogMessage('🔎 Recherche de deals avancés Amazon...');
-
         const browser = await puppeteer.launch({
             headless: true,
             args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -150,32 +152,61 @@ async function checkAmazonAdvancedDeals() {
         });
         const page = await browser.newPage();
 
-        await page.goto('https://www.amazon.fr/deals', { waitUntil: 'networkidle2' });
+        let allDeals = [];
 
-        let deals = await page.evaluate(() => {
-            let dealElements = document.querySelectorAll('.dealContainer');
-            let extractedDeals = [];
-            dealElements.forEach(el => {
-                let title = el.querySelector('.dealTitle').innerText;
-                let currentPrice = el.querySelector('.dealPrice').innerText;
-                let oldPrice = el.querySelector('.dealOldPrice').innerText;
-                let discount = el.querySelector('div[data-component="dui-badge"] .style_badgeLabel__dD0Hv').innerText;
-                let url = el.querySelector('a').href;
+        for (let keyword of searchKeywords) {
+            let currentPage = 1;
+            let hasNextPage = true;
 
-                if (parseFloat(discount.replace('%', '').replace('-', '').trim()) >= 60) {
-                    extractedDeals.push({ title, currentPrice, oldPrice, discount, url });
-                }
-            });
-            return extractedDeals;
-        });
+            while (hasNextPage) {
+                const searchURL = `${baseURL}${keyword}&page=${currentPage}`;
+                await page.goto(searchURL, { waitUntil: 'networkidle2' });
 
-        if (deals.length > 0) {
-            await sendLogMessage(`📦 ${deals.length} deals avancés trouvés sur Amazon.`);
-        } else {
-            await sendLogMessage('❌ Aucun deal avancé trouvé sur Amazon.');
+                let deals = await page.evaluate(() => {
+                    let dealElements = document.querySelectorAll('.s-result-item');
+                    let extractedDeals = [];
+
+                    dealElements.forEach(el => {
+                        let title = el.querySelector('h2 .a-link-normal')?.innerText;
+                        let currentPrice = el.querySelector('.a-price .a-offscreen')?.innerText;
+                        let oldPrice = el.querySelector('.a-price.a-text-price .a-offscreen')?.innerText;
+
+                        if (title && currentPrice && oldPrice) {
+                            let currentPriceValue = parseFloat(currentPrice.replace(/[^\d,.-]/g, '').replace(',', '.'));
+                            let oldPriceValue = parseFloat(oldPrice.replace(/[^\d,.-]/g, '').replace(',', '.'));
+
+                            // Calcul du pourcentage de réduction
+                            let discount = ((oldPriceValue - currentPriceValue) / oldPriceValue) * 100;
+
+                            if (discount >= 50) {
+                                extractedDeals.push({ 
+                                    title, 
+                                    currentPrice: `${currentPriceValue}€`, 
+                                    oldPrice: `${oldPriceValue}€`, 
+                                    discount: discount.toFixed(2) + '%', 
+                                    url: el.querySelector('a')?.href 
+                                });
+                            }
+                        }
+                    });
+                    return extractedDeals;
+                });
+
+                allDeals = [...allDeals, ...deals];
+
+                // Vérification de la présence de la page suivante
+                hasNextPage = await page.$('ul.a-pagination li.a-disabled.a-last') === null;
+                currentPage++;
+            }
         }
 
-        for (let deal of deals) {
+        if (allDeals.length > 0) {
+            await sendLogMessage(`📦 ${allDeals.length} deals trouvés sur Amazon avancé.`);
+        } else {
+            await sendLogMessage('❌ Aucun deal trouvé sur Amazon avancé.');
+        }
+
+        for (let deal of allDeals) {
             const embed = new EmbedBuilder()
                 .setTitle(deal.title)
                 .setURL(deal.url)
@@ -196,6 +227,7 @@ async function checkAmazonAdvancedDeals() {
         console.error('Erreur lors de la recherche des deals avancés Amazon:', error);
     }
 }
+
 
 // ===================== Recherche de Deals Cdiscount =====================
 
