@@ -71,11 +71,19 @@ async function checkAmazonGeneralDeals() {
     try {
         await sendLogMessage('🔎 Recherche de deals Amazon général...');
 
-        const browser = await puppeteer.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            executablePath: '/app/.cache/puppeteer/chrome/linux-129.0.6668.58/chrome-linux'
-        });
+const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process'
+    ]
+});
+
         const page = await browser.newPage();
 
         let allDeals = [];
@@ -145,11 +153,19 @@ async function checkAmazonAdvancedDeals() {
     
     try {
         await sendLogMessage('🔎 Recherche de deals avancés Amazon...');
-        const browser = await puppeteer.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            executablePath: '/app/.cache/puppeteer/chrome/linux-129.0.6668.58/chrome-linux'
-        });
+const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process'
+    ]
+});
+
         const page = await browser.newPage();
 
         let allDeals = [];
