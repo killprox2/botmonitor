@@ -1,450 +1,285 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const puppeteer = require('puppeteer');
 require('dotenv').config();
 
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers,
-    ],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
+  ]
 });
+
+const roleAssignments = {
+  '💰': 'ID_DU_ROLE_EDP',
+  '📦': 'ID_DU_ROLE_AUTRE_VENDEUR',
+  '🟢': 'ID_DU_ROLE_2EURO',
+  '🔵': 'ID_DU_ROLE_1EURO',
+  '🔥': 'ID_DU_ROLE_PROMO',
+  '⚡': 'ID_DU_ROLE_VENTE_FLASH' // Nouveau rôle pour les ventes flash
+};
+
+const channelMentions = {
+  'EDP': '<@&ID_DU_ROLE_EDP>',
+  'Autre_vendeur': '<@&ID_DU_ROLE_AUTRE_VENDEUR>',
+  '2euro': '<@&ID_DU_ROLE_2EURO>',
+  '1euro': '<@&ID_DU_ROLE_1EURO>',
+  'promo': '<@&ID_DU_ROLE_PROMO>',
+  'vente_flash': '<@&ID_DU_ROLE_VENTE_FLASH>', // Mention pour les ventes flash
+  'logs': '1285977835365994506' // Log
+};
+
+// URLs de recherche sur Amazon
+const AMAZON_URLS = [
+  'https://www.amazon.fr/s?k=promo',
+  'https://www.amazon.fr/s?k=electronique',
+  'https://www.amazon.fr/s?k=jouets',
+  'https://www.amazon.fr/s?k=ventes+flash' // Nouvelle URL pour les ventes flash
+];
+
+const PRICE_THRESHOLD = 2;
+const PRICE_THRESHOLD_1_EURO = 1;
+const PROMO_THRESHOLD = 5;
+const EDP_THRESHOLD = 90;
+const CACHE_EXPIRY_TIME = 60 * 60 * 1000;
+const CHECK_INTERVAL = 300000;
+
+const productCache = new Map();
+const dealWatchList = new Map();
+const logsChannelId = 'ID_DU_SALON_LOGS'; // Ajoutez l'ID de votre salon de logs ici
+
+// Fonction pour ajouter un produit au cache
+function addProductToCache(url) {
+  productCache.set(url, Date.now());
+  setTimeout(() => productCache.delete(url), CACHE_EXPIRY_TIME);
+}
+
+// Fonction pour vérifier si un produit est dans le cache
+function isProductInCache(url) {
+  return productCache.has(url);
+}
+
+// Gestion des rôles via réactions
+client.on('messageCreate', async (message) => {
+  if (message.content === '-role') {
+    const embed = new EmbedBuilder()
+      .setColor('#0099ff')
+      .setTitle('Sélection de rôles')
+      .setDescription(`Cliquez sur les emojis ci-dessous pour obtenir des notifications :
+        💰 - Erreur de prix (EDP)
+        📦 - Autres vendeurs
+        🟢 - Produits à moins de 2€
+        🔵 - Produits à moins de 1€
+        🔥 - Promotions
+        ⚡ - Ventes Flash`);
+
+    const roleMessage = await message.channel.send({ embeds: [embed] });
+    await roleMessage.react('💰');
+    await roleMessage.react('📦');
+    await roleMessage.react('🟢');
+    await roleMessage.react('🔵');
+    await roleMessage.react('🔥');
+    await roleMessage.react('⚡'); // Emoji pour ventes flash
+  }
+
+  if (message.content.startsWith('-add_deal')) {
+    const args = message.content.split(' ');
+    const productUrl = args[1];
+    const maxPrice = parseFloat(args[2]);
+
+    if (!productUrl || isNaN(maxPrice)) {
+      message.channel.send('Usage: `-add_deal <url> <prix_max>`');
+      return;
+    }
+
+    dealWatchList.set(productUrl, maxPrice);
+    message.channel.send(`Produit ajouté à la surveillance : ${productUrl} avec un prix maximum de ${maxPrice}€`);
+    logMessage(`Produit ajouté à la surveillance manuelle: ${productUrl} avec un prix max de ${maxPrice}€`);
+  }
+});
+
+// Ajout/Suppression des rôles en fonction des réactions
+client.on('messageReactionAdd', async (reaction, user) => {
+  if (user.bot) return;
+  const roleId = roleAssignments[reaction.emoji.name];
+  if (roleId) {
+    const member = await reaction.message.guild.members.fetch(user.id);
+    const role = reaction.message.guild.roles.cache.get(roleId);
+    if (role) await member.roles.add(role);
+  }
+});
+
+client.on('messageReactionRemove', async (reaction, user) => {
+  if (user.bot) return;
+  const roleId = roleAssignments[reaction.emoji.name];
+  if (roleId) {
+    const member = await reaction.message.guild.members.fetch(user.id);
+    const role = reaction.message.guild.roles.cache.get(roleId);
+    if (role) await member.roles.remove(role);
+  }
+});
+
+// Fonction principale du bot pour surveiller les produits sur Amazon
+client.once('ready', () => {
+  logMessage(`Bot connecté en tant que ${client.user.tag}`);
+  monitorAmazonProducts();
+  monitorDeals(); // Lancer la surveillance des produits ajoutés manuellement
+});
+
+// Fonction pour récupérer les pages Amazon avec gestion des erreurs
+async function fetchAmazonPage(url, retries = 0) {
+  if (!url || url.trim() === '') {
+    logMessage(`Erreur: URL vide ou incorrecte: ${url}`);
+    return null;
+  }
+
+  const options = {
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+    }
+  };
+
+  try {
+    const { data } = await axios.get(url, options);
+    return data;
+  } catch (error) {
+    if (retries < 5) {
+      logMessage(`Erreur lors de la récupération de ${url}, tentative ${retries + 1}`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return fetchAmazonPage(url, retries + 1);
+    }
+    logMessage(`Échec après plusieurs tentatives pour accéder à ${url}: ${error.message}`);
+    return null;
+  }
+}
+
+// Surveillance des produits Amazon, incluant les ventes flash
+async function monitorAmazonProducts() {
+  for (const url of AMAZON_URLS) {
+    if (!url || url.trim() === '') {
+      logMessage('URL vide ou incorrecte ignorée');
+      continue;
+    }
+
+    try {
+      const html = await fetchAmazonPage(url);
+      if (!html) continue;
+
+      const $ = cheerio.load(html);
+
+      $('.s-main-slot .s-result-item').each(async (i, element) => {
+        const productTitle = $(element).find('h2 a span').text();
+        const priceText = $(element).find('.a-price-whole').text();
+        const price = parseFloat(priceText.replace(',', '.'));
+        const oldPriceText = $(element).find('.a-text-price .a-offscreen').first().text();
+        const oldPrice = parseFloat(oldPriceText.replace(',', '.'));
+        const productUrl = 'https://www.amazon.fr' + $(element).find('h2 a').attr('href');
+        const productImage = $(element).find('img').attr('src');
+
+        let shippingCost = 0;
+        const shippingText = $(element).find('.a-color-secondary .a-size-small').text();
+        if (shippingText.toLowerCase().includes('livraison')) {
+          const shippingCostText = shippingText.match(/(\d+,\d+)/);
+          if (shippingCostText) shippingCost = parseFloat(shippingCostText[0].replace(',', '.'));
+        }
+        const totalPrice = price + shippingCost;
+
+        if (!isProductInCache(productUrl) && totalPrice && oldPrice) {
+          const discountPercentage = ((oldPrice - totalPrice) / oldPrice) * 100;
+
+          if (discountPercentage >= PROMO_THRESHOLD) {
+            sendProductToChannel(productTitle, totalPrice, oldPrice, discountPercentage, productUrl, productImage, 'promo');
+          }
+          if (totalPrice <= PRICE_THRESHOLD) {
+            sendProductToChannel(productTitle, totalPrice, oldPrice, discountPercentage, productUrl, productImage, '2euro');
+          }
+          if (totalPrice <= PRICE_THRESHOLD_1_EURO) {
+            sendProductToChannel(productTitle, totalPrice, oldPrice, discountPercentage, productUrl, productImage, '1euro');
+          }
+          if (discountPercentage >= EDP_THRESHOLD) {
+            sendProductToChannel(productTitle, totalPrice, oldPrice, discountPercentage, productUrl, productImage, 'EDP');
+          }
+
+          // Détection des ventes flash
+          const flashDealText = $(element).find('.dealBadge').text();
+          if (flashDealText.toLowerCase().includes('vente flash')) {
+            sendProductToChannel(productTitle, totalPrice, oldPrice, discountPercentage, productUrl, productImage, 'vente_flash');
+          }
+
+          addProductToCache(productUrl);
+        }
+      });
+    } catch (error) {
+      logMessage(`Erreur lors de la récupération des produits: ${error.message}`);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, CHECK_INTERVAL));
+  }
+}
+
+// Surveillance des produits ajoutés manuellement avec `-add_deal`
+async function monitorDeals() {
+  setInterval(async () => {
+    for (const [url, maxPrice] of dealWatchList.entries()) {
+      try {
+        const html = await fetchAmazonPage(url);
+        if (!html) continue;
+
+        const $ = cheerio.load(html);
+        const priceText = $('.a-price-whole').first().text();
+        const price = parseFloat(priceText.replace(',', '.'));
+        if (price <= maxPrice) {
+          sendProductToChannel('Produit surveillé', price, maxPrice, 0, url, '', 'deal');
+        }
+      } catch (error) {
+        logMessage(`Erreur lors de la surveillance des deals: ${error.message}`);
+      }
+    }
+  }, CHECK_INTERVAL);
+}
+
+// Envoi du produit dans le salon approprié
+function sendProductToChannel(title, price, oldPrice, discountPercentage, url, image, category) {
+  const channelId = {
+    'EDP': '1285953900066902057',
+    'promo': '1285969661535453215',
+    '2euro': '1285939619598172232',
+    '1euro': '1255863140974071893',
+    'Autre_vendeur': '1285974003307118644',
+    'deal': '1285955371252580352',
+    'vente_flash': 'ID_DU_SALON_VENTE_FLASH' // Nouveau salon pour les ventes flash
+  }[category];
+
+  const channel = client.channels.cache.get(channelId);
+  if (channel) {
+    const embed = new EmbedBuilder()
+      .setColor('#0099ff')
+      .setTitle(title)
+      .setURL(url)
+      .setDescription(discountPercentage > 0 ? `Réduction de ${Math.round(discountPercentage)}%` : '')
+      .setThumbnail(image)
+      .addFields(
+        { name: 'Prix actuel', value: `${price}€`, inline: true },
+        { name: 'Prix habituel', value: `${oldPrice}€`, inline: true },
+        { name: 'Lien', value: `[Acheter maintenant](${url})`, inline: true }
+      )
+      .setTimestamp();
+
+    channel.send({ embeds: [embed] });
+  }
+}
+
+// Fonction pour loguer des messages dans le salon "logs"
+function logMessage(message) {
+  const logsChannel = client.channels.cache.get(logsChannelId);
+  if (logsChannel) {
+    logsChannel.send(message);
+  } else {
+    console.log(`Logs: ${message}`);
+  }
+}
 
 client.login(process.env.TOKEN);
-
-const roles = {
-    owner: 'OwnerRoleID',
-    modo: 'ModoRoleID',
-    preniumPlus: 'PreniumPlusRoleID',
-    prenium: 'PreniumRoleID',
-    visiteur: 'VisiteurRoleID',
-};
-
-const channels = {
-    amazon: '1255863140974071893',
-    cdiscount: '1285939619598172232',
-    auchan: '1285969661535453215',
-    manomano: '1285953900066902057',
-    electromenager: 'ElectromenagerChannelID',
-    livre: 'LivreChannelID',
-    enfant: 'EnfantChannelID',
-    jouet: 'JouetChannelID',
-    entretien: 'EntretienChannelID',
-    electronique: 'ElectroniqueChannelID',
-    logs: '1285977835365994506',
-};
-
-// Fonction pour envoyer des messages dans le canal de logs
-async function sendLogMessage(content) {
-    try {
-        const logChannel = await client.channels.fetch(channels.logs);
-        if (logChannel) {
-            await logChannel.send(content);
-        } else {
-            console.log('Canal de logs introuvable.');
-        }
-    } catch (error) {
-        console.log('Erreur d\'envoi du message de log :', error);
-    }
-}
-
-// Lancement du bot et démarrage des recherches
-client.once('ready', async () => {
-    console.log('Le bot est en ligne !');
-    await sendLogMessage('✅ Bot démarré et prêt à l\'emploi.');
-    await checkAmazonGeneralDeals();
-    await checkAmazonAdvancedDeals();
-    await checkCdiscountDeals();
-    await checkAuchanDeals();
-    await checkManomanoDeals();
-});
-
-// ===================== Recherche Amazon Général =====================
-
-async function checkAmazonGeneralDeals() {
-    const searchURLs = [
-        'https://www.amazon.fr/deals',
-        'https://www.amazon.fr/s?rh=n%3A20606778031&language=fr_FR',
-        'https://www.amazon.fr/s?k=pas+cher',
-        'https://www.amazon.fr/s?k=1+euro',
-    ];
-
-    try {
-        await sendLogMessage('🔎 Recherche de deals Amazon général...');
-
-        const browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process',
-            ],
-        });
-
-        const page = await browser.newPage();
-
-        let allDeals = [];
-
-        for (let url of searchURLs) {
-            await page.goto(url, { waitUntil: 'domcontentloaded' });
-
-            let deals = await page.evaluate(() => {
-                let dealElements = document.querySelectorAll('.s-result-item');
-
-                let extractedDeals = [];
-                dealElements.forEach(el => {
-                    let title = el.querySelector('h2 .a-link-normal')?.innerText;
-                    let currentPrice = el.querySelector('.a-price .a-offscreen')?.innerText;
-                    let oldPrice = el.querySelector('.a-text-price .a-offscreen')?.innerText;
-
-                    if (title && currentPrice && oldPrice) {
-                        let currentPriceValue = parseFloat(currentPrice.replace(/[^\d,.-]/g, '').replace(',', '.'));
-                        let oldPriceValue = parseFloat(oldPrice.replace(/[^\d,.-]/g, '').replace(',', '.'));
-
-                        let discount = ((oldPriceValue - currentPriceValue) / oldPriceValue) * 100;
-
-                        if (discount >= 50) {
-                            extractedDeals.push({
-                                title,
-                                currentPrice: `${currentPriceValue}€`,
-                                oldPrice: `${oldPriceValue}€`,
-                                discount: discount.toFixed(2) + '%',
-                                url: el.querySelector('a')?.href,
-                            });
-                        }
-                    }
-                });
-                return extractedDeals;
-            });
-
-            allDeals = [...allDeals, ...deals];
-        }
-
-        if (allDeals.length > 0) {
-            await sendLogMessage(`📦 ${allDeals.length} deals trouvés sur Amazon général.`);
-        } else {
-            await sendLogMessage('❌ Aucun deal trouvé sur Amazon général.');
-        }
-
-        for (let deal of allDeals) {
-            const embed = new EmbedBuilder()
-                .setTitle(deal.title)
-                .setURL(deal.url)
-                .addFields(
-                    { name: 'Prix actuel', value: deal.currentPrice, inline: true },
-                    { name: 'Prix avant', value: deal.oldPrice, inline: true },
-                    { name: 'Réduction', value: deal.discount, inline: true },
-                )
-                .setFooter({ text: 'Amazon Deal' });
-
-            client.channels.cache.get(channels.amazon).send({ embeds: [embed] });
-            await sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount})`);
-        }
-
-        await page.close();
-        await browser.close();
-    } catch (error) {
-        await sendLogMessage('⚠️ Erreur lors de la recherche des deals Amazon général.');
-        console.error('Erreur lors de la recherche des deals Amazon général:', error);
-    }
-}
-
-// ===================== Recherche Amazon Avancé =====================
-
-async function checkAmazonAdvancedDeals() {
-    const searchKeywords = ['entretien', 'electromenager', 'jouet', 'livre', 'enfant'];
-    const baseURL = 'https://www.amazon.fr/s?k=';
-
-    try {
-        await sendLogMessage('🔎 Recherche de deals avancés Amazon...');
-
-        const browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process',
-            ],
-        });
-
-        const page = await browser.newPage();
-
-        let allDeals = [];
-
-        for (let keyword of searchKeywords) {
-            let currentPage = 1;
-            let hasNextPage = true;
-
-            while (hasNextPage) {
-                const searchURL = `${baseURL}${keyword}&page=${currentPage}`;
-                await page.goto(searchURL, { waitUntil: 'domcontentloaded' });
-
-                let deals = await page.evaluate(() => {
-                    let dealElements = document.querySelectorAll('.s-result-item');
-                    let extractedDeals = [];
-
-                    dealElements.forEach(el => {
-                        let title = el.querySelector('h2 .a-link-normal')?.innerText;
-                        let currentPrice = el.querySelector('.a-price .a-offscreen')?.innerText;
-                        let oldPrice = el.querySelector('.a-price.a-text-price .a-offscreen')?.innerText;
-
-                        if (title && currentPrice && oldPrice) {
-                            let currentPriceValue = parseFloat(currentPrice.replace(/[^\d,.-]/g, '').replace(',', '.'));
-                            let oldPriceValue = parseFloat(oldPrice.replace(/[^\d,.-]/g, '').replace(',', '.'));
-
-                            let discount = ((oldPriceValue - currentPriceValue) / oldPriceValue) * 100;
-
-                            if (discount >= 50) {
-                                extractedDeals.push({
-                                    title,
-                                    currentPrice: `${currentPriceValue}€`,
-                                    oldPrice: `${oldPriceValue}€`,
-                                    discount: discount.toFixed(2) + '%',
-                                    url: el.querySelector('a')?.href,
-                                });
-                            }
-                        }
-                    });
-                    return extractedDeals;
-                });
-
-                allDeals = [...allDeals, ...deals];
-
-                // Vérification de la présence de la page suivante
-                hasNextPage = await page.$('ul.a-pagination li.a-disabled.a-last') === null;
-                currentPage++;
-            }
-        }
-
-        if (allDeals.length > 0) {
-            await sendLogMessage(`📦 ${allDeals.length} deals trouvés sur Amazon avancé.`);
-        } else {
-            await sendLogMessage('❌ Aucun deal trouvé sur Amazon avancé.');
-        }
-
-        for (let deal of allDeals) {
-            const embed = new EmbedBuilder()
-                .setTitle(deal.title)
-                .setURL(deal.url)
-                .addFields(
-                    { name: 'Prix actuel', value: deal.currentPrice, inline: true },
-                    { name: 'Prix avant', value: deal.oldPrice, inline: true },
-                    { name: 'Réduction', value: deal.discount, inline: true },
-                )
-                .setFooter({ text: 'Amazon Advanced Deal' });
-
-            client.channels.cache.get(channels.electromenager).send({ embeds: [embed] });
-            await sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount})`);
-        }
-
-        await page.close();
-        await browser.close();
-    } catch (error) {
-        await sendLogMessage('⚠️ Erreur lors de la recherche des deals avancés Amazon.');
-        console.error('Erreur lors de la recherche des deals avancés Amazon:', error);
-    }
-}
-
-// ===================== Recherche de Deals Cdiscount =====================
-
-async function checkCdiscountDeals() {
-    try {
-        await sendLogMessage('🔎 Recherche de deals Cdiscount...');
-
-        const { data } = await axios.get('https://www.cdiscount.com/', {
-            headers: {
-                'User-Agent': rotateUserAgent(),
-                'Referer': 'https://www.google.com',
-                'Accept-Language': 'fr-FR,fr;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-            },
-        });
-
-        const $ = cheerio.load(data);
-        const deals = [];
-
-        $('.productContainer').each((i, el) => {
-            const title = $(el).find('.productTitle').text().trim();
-            const currentPrice = $(el).find('.productPrice').text().trim();
-            const oldPrice = $(el).find('.productOldPrice').text().trim();
-            const discount = $(el).find('.productDiscount').text().trim();
-            let url = $(el).find('a').attr('href');
-
-            if (url.startsWith('/')) {
-                url = `https://www.cdiscount.com${url}`;
-            }
-
-            if (parseFloat(discount.replace('%', '').replace('-', '').trim()) >= 50) {
-                deals.push({ title, currentPrice, oldPrice, discount, url });
-            }
-        });
-
-        if (deals.length > 0) {
-            await sendLogMessage(`📦 ${deals.length} deals trouvés sur Cdiscount.`);
-        } else {
-            await sendLogMessage('❌ Aucun deal trouvé sur Cdiscount.');
-        }
-
-        for (let deal of deals) {
-            const embed = new EmbedBuilder()
-                .setTitle(deal.title)
-                .setURL(deal.url)
-                .addFields(
-                    { name: 'Prix actuel', value: deal.currentPrice, inline: true },
-                    { name: 'Prix avant', value: deal.oldPrice, inline: true },
-                    { name: 'Réduction', value: deal.discount, inline: true },
-                )
-                .setFooter({ text: 'Cdiscount Deal' });
-
-            client.channels.cache.get(channels.cdiscount).send({ embeds: [embed] });
-            await sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount})`);
-        }
-    } catch (error) {
-        await sendLogMessage('⚠️ Erreur lors de la recherche des deals Cdiscount.');
-        console.error('Erreur lors de la recherche des deals Cdiscount:', error);
-    }
-}
-
-// ===================== Recherche de Deals Auchan =====================
-
-async function checkAuchanDeals() {
-    try {
-        await sendLogMessage('🔎 Recherche de deals Auchan...');
-
-        const { data } = await axios.get('https://www.auchan.fr/', {
-            headers: {
-                'User-Agent': rotateUserAgent(),
-                'Referer': 'https://www.google.com',
-                'Accept-Language': 'fr-FR,fr;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-            },
-        });
-
-        const $ = cheerio.load(data);
-        const deals = [];
-
-        $('.productContainer').each((i, el) => {
-            const title = $(el).find('.productTitle').text().trim();
-            const currentPrice = $(el).find('.productPrice').text().trim();
-            const oldPrice = $(el).find('.productOldPrice').text().trim();
-            const discount = $(el).find('.productDiscount').text().trim();
-            let url = $(el).find('a').attr('href');
-
-            if (url.startsWith('/')) {
-                url = `https://www.auchan.fr${url}`;
-            }
-
-            if (parseFloat(discount.replace('%', '').replace('-', '').trim()) >= 50) {
-                deals.push({ title, currentPrice, oldPrice, discount, url });
-            }
-        });
-
-        if (deals.length > 0) {
-            await sendLogMessage(`📦 ${deals.length} deals trouvés sur Auchan.`);
-        } else {
-            await sendLogMessage('❌ Aucun deal trouvé sur Auchan.');
-        }
-
-        for (let deal of deals) {
-            const embed = new EmbedBuilder()
-                .setTitle(deal.title)
-                .setURL(deal.url)
-                .addFields(
-                    { name: 'Prix actuel', value: deal.currentPrice, inline: true },
-                    { name: 'Prix avant', value: deal.oldPrice, inline: true },
-                    { name: 'Réduction', value: deal.discount, inline: true },
-                )
-                .setFooter({ text: 'Auchan Deal' });
-
-            client.channels.cache.get(channels.auchan).send({ embeds: [embed] });
-            await sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount})`);
-        }
-    } catch (error) {
-        await sendLogMessage('⚠️ Erreur lors de la recherche des deals Auchan.');
-        console.error('Erreur lors de la recherche des deals Auchan:', error);
-    }
-}
-
-// ===================== Recherche de Deals Manomano =====================
-
-async function checkManomanoDeals() {
-    try {
-        await sendLogMessage('🔎 Recherche de deals Manomano...');
-
-        const { data } = await axios.get('https://www.manomano.fr/', {
-            headers: {
-                'User-Agent': rotateUserAgent(),
-                'Referer': 'https://www.google.com',
-                'Accept-Language': 'fr-FR,fr;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-            },
-        });
-
-        const $ = cheerio.load(data);
-        const deals = [];
-
-        $('.productContainer').each((i, el) => {
-            const title = $(el).find('.productTitle').text().trim();
-            const currentPrice = $(el).find('.productPrice').text().trim();
-            const oldPrice = $(el).find('.productOldPrice').text().trim();
-            const discount = $(el).find('.productDiscount').text().trim();
-            let url = $(el).find('a').attr('href');
-
-            if (url.startsWith('/')) {
-                url = `https://www.manomano.fr${url}`;
-            }
-
-            if (parseFloat(discount.replace('%', '').replace('-', '').trim()) >= 50) {
-                deals.push({ title, currentPrice, oldPrice, discount, url });
-            }
-        });
-
-        if (deals.length > 0) {
-            await sendLogMessage(`📦 ${deals.length} deals trouvés sur Manomano.`);
-        } else {
-            await sendLogMessage('❌ Aucun deal trouvé sur Manomano.');
-        }
-
-        for (let deal of deals) {
-            const embed = new EmbedBuilder()
-                .setTitle(deal.title)
-                .setURL(deal.url)
-                .addFields(
-                    { name: 'Prix actuel', value: deal.currentPrice, inline: true },
-                    { name: 'Prix avant', value: deal.oldPrice, inline: true },
-                    { name: 'Réduction', value: deal.discount, inline: true },
-                )
-                .setFooter({ text: 'Manomano Deal' });
-
-            client.channels.cache.get(channels.manomano).send({ embeds: [embed] });
-            await sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount})`);
-        }
-    } catch (error) {
-        await sendLogMessage('⚠️ Erreur lors de la recherche des deals Manomano.');
-        console.error('Erreur lors de la recherche des deals Manomano:', error);
-    }
-}
-
-// Fonction de rotation du User-Agent
-function rotateUserAgent() {
-    const userAgents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Safari/605.1.15',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36',
-        'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0',
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1',
-        'Mozilla/5.0 (iPad; CPU OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1',
-    ];
-    return userAgents[Math.floor(Math.random() * userAgents.length)];
-}
