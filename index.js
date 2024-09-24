@@ -37,20 +37,20 @@ const channels = {
     logs: '1285977835365994506',
 };
 
-// Function to send log messages
+// Fonction pour envoyer des messages dans le canal de logs
 async function sendLogMessage(content) {
     const logChannel = await client.channels.fetch(channels.logs);
     if (logChannel) {
         await logChannel.send(content);
     } else {
-        console.log('Log channel not found.');
+        console.log('Canal de logs introuvable.');
     }
 }
 
-// Bot ready and start functions
+// Lancement du bot et démarrage des recherches
 client.once('ready', async () => {
-    console.log('Bot is online!');
-    await sendLogMessage('✅ Bot started and ready.');
+    console.log('Le bot est en ligne !');
+    await sendLogMessage('✅ Bot démarré et prêt à l\'emploi.');
     await checkAmazonGeneralDeals();
     await checkAmazonAdvancedDeals();
     await checkCdiscountDeals();
@@ -58,12 +58,12 @@ client.once('ready', async () => {
     await checkManomanoDeals();
 });
 
-// ===================== Amazon General Deals =====================
+// ===================== Recherche Amazon Général =====================
 
 async function checkAmazonGeneralDeals() {
     const searchURLs = [
         'https://www.amazon.fr/deals',
-        'https://www.amazon.fr/s?rh=n%3A20606778031&language=fr_FR&brr=1&pf_rd_i=10056877031&pf_rd_m=A1X6FK5RDHNB96&pf_rd_p=ac8b3944-2010-46c6-a595-22c3bf6a092c&pf_rd_r=2GX51YY5HPQ7RJTHPDXX&pf_rd_s=merchandised-search-top-2&pf_rd_t=101&rd=1&ref=froutlet_1',
+        'https://www.amazon.fr/s?rh=n%3A20606778031&language=fr_FR',
         'https://www.amazon.fr/s?k=pas+cher',
         'https://www.amazon.fr/s?k=1+euro',
     ];
@@ -93,11 +93,9 @@ async function checkAmazonGeneralDeals() {
                     let oldPrice = el.querySelector('.a-text-price .a-offscreen')?.innerText;
 
                     if (title && currentPrice && oldPrice) {
-                        // Extraire les prix
                         let currentPriceValue = parseFloat(currentPrice.replace(/[^\d,.-]/g, '').replace(',', '.'));
                         let oldPriceValue = parseFloat(oldPrice.replace(/[^\d,.-]/g, '').replace(',', '.'));
-                        
-                        // Calcul de la réduction
+
                         let discount = ((oldPriceValue - currentPriceValue) / oldPriceValue) * 100;
 
                         if (discount >= 50) {
@@ -139,11 +137,11 @@ async function checkAmazonGeneralDeals() {
     }
 }
 
-// ===================== Amazon Advanced Deals =====================
+// ===================== Recherche Amazon Avancé =====================
 
 async function checkAmazonAdvancedDeals() {
     try {
-        await sendLogMessage('🔎 Searching for Amazon advanced deals...');
+        await sendLogMessage('🔎 Recherche de deals avancés Amazon...');
 
         const browser = await puppeteer.launch({
             headless: true,
@@ -172,9 +170,9 @@ async function checkAmazonAdvancedDeals() {
         });
 
         if (deals.length > 0) {
-            await sendLogMessage(`📦 ${deals.length} advanced deals found on Amazon.`);
+            await sendLogMessage(`📦 ${deals.length} deals avancés trouvés sur Amazon.`);
         } else {
-            await sendLogMessage('❌ No advanced deals found on Amazon.');
+            await sendLogMessage('❌ Aucun deal avancé trouvé sur Amazon.');
         }
 
         for (let deal of deals) {
@@ -182,28 +180,28 @@ async function checkAmazonAdvancedDeals() {
                 .setTitle(deal.title)
                 .setURL(deal.url)
                 .addFields(
-                    { name: 'Current Price', value: deal.currentPrice, inline: true },
-                    { name: 'Old Price', value: deal.oldPrice, inline: true },
-                    { name: 'Discount', value: deal.discount, inline: true }
+                    { name: 'Prix actuel', value: deal.currentPrice, inline: true },
+                    { name: 'Prix avant', value: deal.oldPrice, inline: true },
+                    { name: 'Réduction', value: deal.discount, inline: true }
                 )
                 .setFooter({ text: 'Amazon Advanced Deal' });
 
             client.channels.cache.get(channels.electromenager).send({ embeds: [embed] });
-            await sendLogMessage(`📌 Product added to Electromenager: ${deal.title} - ${deal.currentPrice}€ (discount of ${deal.discount})`);
+            await sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount})`);
         }
 
         await browser.close();
     } catch (error) {
-        await sendLogMessage('⚠️ Error searching for advanced Amazon deals.');
-        console.error('Error searching advanced Amazon deals:', error);
+        await sendLogMessage('⚠️ Erreur lors de la recherche des deals avancés Amazon.');
+        console.error('Erreur lors de la recherche des deals avancés Amazon:', error);
     }
 }
 
-// ===================== Cdiscount Deals =====================
+// ===================== Recherche de Deals Cdiscount =====================
 
 async function checkCdiscountDeals() {
     try {
-        await sendLogMessage('🔎 Searching for Cdiscount deals...');
+        await sendLogMessage('🔎 Recherche de deals Cdiscount...');
 
         const { data } = await axios.get('https://www.cdiscount.com/', {
             headers: {
@@ -259,11 +257,11 @@ async function checkCdiscountDeals() {
     }
 }
 
-// ===================== Auchan Deals =====================
+// ===================== Recherche de Deals Auchan =====================
 
 async function checkAuchanDeals() {
     try {
-        await sendLogMessage('🔎 Searching for Auchan deals...');
+        await sendLogMessage('🔎 Recherche de deals Auchan...');
 
         const { data } = await axios.get('https://www.auchan.fr/', {
             headers: {
@@ -319,11 +317,11 @@ async function checkAuchanDeals() {
     }
 }
 
-// ===================== Manomano Deals =====================
+// ===================== Recherche de Deals Manomano =====================
 
 async function checkManomanoDeals() {
     try {
-        await sendLogMessage('🔎 Searching for Manomano deals...');
+        await sendLogMessage('🔎 Recherche de deals Manomano...');
 
         const { data } = await axios.get('https://www.manomano.fr/', {
             headers: {
@@ -379,7 +377,7 @@ async function checkManomanoDeals() {
     }
 }
 
-// User-Agent rotation function
+// Fonction de rotation du User-Agent
 function rotateUserAgent() {
     const userAgents = [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
