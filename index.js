@@ -61,8 +61,15 @@ client.once('ready', async () => {
 // ===================== Amazon General Deals =====================
 
 async function checkAmazonGeneralDeals() {
+    const searchURLs = [
+        'https://www.amazon.fr/deals',
+        'https://www.amazon.fr/s?rh=n%3A20606778031&language=fr_FR&brr=1&pf_rd_i=10056877031&pf_rd_m=A1X6FK5RDHNB96&pf_rd_p=ac8b3944-2010-46c6-a595-22c3bf6a092c&pf_rd_r=2GX51YY5HPQ7RJTHPDXX&pf_rd_s=merchandised-search-top-2&pf_rd_t=101&rd=1&ref=froutlet_1',
+        'https://www.amazon.fr/s?k=pas+cher',
+        'https://www.amazon.fr/s?k=1+euro',
+    ];
+
     try {
-        await sendLogMessage('🔎 Searching for Amazon general deals...');
+        await sendLogMessage('🔎 Recherche de deals Amazon général...');
 
         const browser = await puppeteer.launch({
             headless: true,
@@ -71,50 +78,64 @@ async function checkAmazonGeneralDeals() {
         });
         const page = await browser.newPage();
 
-        await page.goto('https://www.amazon.fr/deals', { waitUntil: 'networkidle2' });
+        let allDeals = [];
 
-        let deals = await page.evaluate(() => {
-            let dealElements = document.querySelectorAll('.dealContainer');
-            let extractedDeals = [];
-            dealElements.forEach(el => {
-                let title = el.querySelector('.dealTitle').innerText;
-                let currentPrice = el.querySelector('.dealPrice').innerText;
-                let oldPrice = el.querySelector('.dealOldPrice').innerText;
-                let discount = el.querySelector('div[data-component="dui-badge"] .style_badgeLabel__dD0Hv').innerText;
-                let url = el.querySelector('a').href;
+        for (let url of searchURLs) {
+            await page.goto(url, { waitUntil: 'networkidle2' });
 
-                if (parseFloat(discount.replace('%', '').replace('-', '').trim()) >= 70) {
-                    extractedDeals.push({ title, currentPrice, oldPrice, discount, url });
-                }
+            let deals = await page.evaluate(() => {
+                let dealElements = document.querySelectorAll('.s-result-item');
+
+                let extractedDeals = [];
+                dealElements.forEach(el => {
+                    let title = el.querySelector('h2 .a-link-normal')?.innerText;
+                    let currentPrice = el.querySelector('.a-price .a-offscreen')?.innerText;
+                    let oldPrice = el.querySelector('.a-text-price .a-offscreen')?.innerText;
+
+                    if (title && currentPrice && oldPrice) {
+                        // Extraire les prix
+                        let currentPriceValue = parseFloat(currentPrice.replace(/[^\d,.-]/g, '').replace(',', '.'));
+                        let oldPriceValue = parseFloat(oldPrice.replace(/[^\d,.-]/g, '').replace(',', '.'));
+                        
+                        // Calcul de la réduction
+                        let discount = ((oldPriceValue - currentPriceValue) / oldPriceValue) * 100;
+
+                        if (discount >= 50) {
+                            extractedDeals.push({ title, currentPrice, oldPrice, discount: discount.toFixed(2) + '%', url: el.querySelector('a')?.href });
+                        }
+                    }
+                });
+                return extractedDeals;
             });
-            return extractedDeals;
-        });
 
-        if (deals.length > 0) {
-            await sendLogMessage(`📦 ${deals.length} deals found on Amazon.`);
-        } else {
-            await sendLogMessage('❌ No deals found on Amazon.');
+            allDeals = [...allDeals, ...deals];
         }
 
-        for (let deal of deals) {
+        if (allDeals.length > 0) {
+            await sendLogMessage(`📦 ${allDeals.length} deals trouvés sur Amazon général.`);
+        } else {
+            await sendLogMessage('❌ Aucun deal trouvé sur Amazon général.');
+        }
+
+        for (let deal of allDeals) {
             const embed = new EmbedBuilder()
                 .setTitle(deal.title)
                 .setURL(deal.url)
                 .addFields(
-                    { name: 'Current Price', value: deal.currentPrice, inline: true },
-                    { name: 'Old Price', value: deal.oldPrice, inline: true },
-                    { name: 'Discount', value: deal.discount, inline: true }
+                    { name: 'Prix actuel', value: deal.currentPrice, inline: true },
+                    { name: 'Prix avant', value: deal.oldPrice, inline: true },
+                    { name: 'Réduction', value: deal.discount, inline: true }
                 )
                 .setFooter({ text: 'Amazon Deal' });
 
             client.channels.cache.get(channels.amazon).send({ embeds: [embed] });
-            await sendLogMessage(`📌 Product added: ${deal.title} - ${deal.currentPrice}€ (discount of ${deal.discount})`);
+            await sendLogMessage(`📌 Produit ajouté : ${deal.title} - ${deal.currentPrice}€ (réduction de ${deal.discount})`);
         }
 
         await browser.close();
     } catch (error) {
-        await sendLogMessage('⚠️ Error searching for Amazon general deals.');
-        console.error('Error searching Amazon general deals:', error);
+        await sendLogMessage('⚠️ Erreur lors de la recherche des deals Amazon général.');
+        console.error('Erreur lors de la recherche des deals Amazon général:', error);
     }
 }
 
